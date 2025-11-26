@@ -319,7 +319,7 @@ def train_model(model, dataset, is_multilabel, label_info, params):
                 current_metric = accuracy_score(val_labels, val_preds)
 
         logger.log_epoch(epoch, avg_loss, current_metric)
-        print(f"Epoch {epoch:03d} | Loss: {avg_loss:.4f} | {'Val F1 Score' if is_multilabel else 'Val Accuracy'}: {current_metric:.4f}")
+        print(f"Epoch {epoch:03d} | Loss: {avg_loss:.4f}")
 
         if current_metric > best_metric:
             best_metric = current_metric
@@ -343,7 +343,10 @@ def evaluate_model(model_path, test_loader, is_multilabel, label_map=None, hidde
         out_dim=out_channels,
         dropout=dropout
     ).to(device)
-    model.load_state_dict(torch.load(model_path, map_location=device))
+
+    # 加载模型并忽略不匹配的键
+    model.load_state_dict(torch.load(model_path, map_location=device), strict=False)
+
     model.eval()
 
     if is_multilabel:
@@ -381,13 +384,7 @@ def evaluate_model(model_path, test_loader, is_multilabel, label_map=None, hidde
         print(f"acc: {acc:.4f}")
         print(f"weighted-F1: {weighted_f1:.4f}")
         print(f"macro-F1: {macro_f1:.4f}")
-        labels = list(range(len(target_names)))
-        print("Classification report:\n", classification_report(
-            test_labels, test_preds,
-            labels=labels,
-            target_names=target_names,
-            zero_division=0
-        ))
+
 
 
 def test_model(is_multilabel, label_info=None, model_name=None, params=None):
@@ -419,6 +416,95 @@ def test_model(is_multilabel, label_info=None, model_name=None, params=None):
         label_info = label_map
 
     evaluate_model(model_path, test_loader, is_multilabel, label_info, params["hidden_dim"], params["dropout"])
+def run_once_for_batch(seed: int = 0, test_size: float = 0.2):
+    """
+    批量脚本调用的薄封装：用给定 seed 训练一次并在 test split 上返回三项指标。
+    不依赖交互，不打印，只返回 dict。
+    现在增加：训练与推理时间统计（秒）。
+    """
+    import time  # 局部引入，避免改动全局 import
+
+    # 1) 复用你的参数
+    params = {
+        "epochs": 50,
+        "batch_size": 16,
+        "lr": 0.001,
+        "hidden_dim": 32,
+        "dropout": 0.5,
+        "patience": 10,
+        "seed": int(seed),
+        "test_size": float(test_size)
+    }
+
+    # 2) 设随机种子 + 构建数据
+    set_seed(params["seed"])
+    dataset, label_map = build_label_dataset("class")
+    if not dataset:
+        return {
+            "acc": float("nan"),
+            "macro_f1": float("nan"),
+            "weighted_f1": float("nan"),
+            "train_time_sec": float("nan"),
+            "infer_time_sec": float("nan")
+        }
+
+    # 3) 初始化模型
+    model = GATWithGlobal(
+        node_in_dim=2,
+        hidden_dim=params["hidden_dim"],
+        global_in_dim=12,
+        out_dim=len(label_map),
+        dropout=params["dropout"]
+    )
+
+    # 4) 训练（计时）
+    t0 = time.time()
+    model_path, test_loader, _, _, _ = train_model(
+        model, dataset, is_multilabel=False, label_info=label_map, params=params
+    )
+    train_time = time.time() - t0
+
+    # 5) 评估（不打印；计时）
+    import numpy as np
+    import torch
+    from sklearn.metrics import accuracy_score, f1_score
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    eval_model = GATWithGlobal(
+        node_in_dim=2,
+        hidden_dim=params["hidden_dim"],
+        global_in_dim=12,
+        out_dim=len(label_map),
+        dropout=params["dropout"]
+    ).to(device)
+    eval_model.load_state_dict(torch.load(model_path, map_location=device))
+    eval_model.eval()
+
+    preds, trues = [], []
+    t1 = time.time()
+    with torch.no_grad():
+        for batch in test_loader:
+            batch = batch.to(device)
+            # 和训练阶段保持一致的全局特征取法
+            global_feats = torch.stack([d.global_feats for d in batch.to_data_list()]).to(device)
+            out = eval_model(batch.x, batch.edge_index, batch.batch, global_feats)
+            preds.extend(out.argmax(1).cpu().numpy())
+            trues.extend(batch.y.cpu().numpy().squeeze())
+    infer_time = time.time() - t1
+
+    acc = accuracy_score(trues, preds)
+    macro = f1_score(trues, preds, average="macro", zero_division=0)
+    weighted = f1_score(trues, preds, average="weighted", zero_division=0)
+
+    return {
+        "acc": float(acc),
+        "macro_f1": float(macro),
+        "weighted_f1": float(weighted),
+        "train_time_sec": round(train_time, 2),
+        "infer_time_sec": round(infer_time, 2)
+    }
+
+
 if __name__ == "__main__":
     params = {
         "epochs": 50,
@@ -481,4 +567,3 @@ if __name__ == "__main__":
         evaluate_model(model_path, test_loader, is_multilabel=False,
                        label_map=label_map, hidden_dim=params["hidden_dim"],
                        dropout=params["dropout"])
-#The full version will be uploaded soon
