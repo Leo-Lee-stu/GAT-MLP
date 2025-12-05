@@ -1,0 +1,6 @@
+[2025-11-25 15:33:42]  All done. Total time: 2579.43s
+
+=== Final Summary (mean ± std) ===
+           acc  macro_f1  weighted_f1
+mean  0.904348  0.656097     0.889944
+std   0.039491  0.110066     0.044094
