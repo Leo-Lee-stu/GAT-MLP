@@ -162,7 +162,7 @@ def build_multilabel_dataset(label_cols, excel_file="method3_dataset_class.xlsx"
         clq_files = {f.replace('.clq', '') for f in os.listdir(CLQ_DIR) if f.endswith('.clq')}
         valid_graphs = set(df["Graph Name"]).intersection(clq_files)
         if not valid_graphs:
-            raise ValueError("无匹配的图数据")
+            raise ValueError("No matching graph data available")
         df = df[df["Graph Name"].isin(valid_graphs)]
         global global_feature_scaler
         df[feature_cols] = global_feature_scaler.fit_transform(df[feature_cols])
@@ -344,7 +344,7 @@ def evaluate_model(model_path, test_loader, is_multilabel, label_map=None, hidde
         dropout=dropout
     ).to(device)
 
-    # 加载模型并忽略不匹配的键
+    
     model.load_state_dict(torch.load(model_path, map_location=device), strict=False)
 
     model.eval()
@@ -391,7 +391,7 @@ def test_model(is_multilabel, label_info=None, model_name=None, params=None):
     model_name = model_name or ("best_model.pt")
     model_path = os.path.join(MODEL_DIR, model_name)
     if not os.path.exists(model_path):
-        raise FileNotFoundError(f"模型文件未找到: {model_path}")
+        raise FileNotFoundError(f"model not found: {model_path}")
 
     if is_multilabel:
         label_cols = ["is_Clisat", "is_LMC", "is_MoMC", "is_dOmega"]
@@ -417,14 +417,10 @@ def test_model(is_multilabel, label_info=None, model_name=None, params=None):
 
     evaluate_model(model_path, test_loader, is_multilabel, label_info, params["hidden_dim"], params["dropout"])
 def run_once_for_batch(seed: int = 0, test_size: float = 0.2):
-    """
-    批量脚本调用的薄封装：用给定 seed 训练一次并在 test split 上返回三项指标。
-    不依赖交互，不打印，只返回 dict。
-    现在增加：训练与推理时间统计（秒）。
-    """
-    import time  # 局部引入，避免改动全局 import
+    
+    import time  
 
-    # 1) 复用你的参数
+    
     params = {
         "epochs": 50,
         "batch_size": 16,
@@ -436,7 +432,7 @@ def run_once_for_batch(seed: int = 0, test_size: float = 0.2):
         "test_size": float(test_size)
     }
 
-    # 2) 设随机种子 + 构建数据
+    
     set_seed(params["seed"])
     dataset, label_map = build_label_dataset("class")
     if not dataset:
@@ -448,7 +444,7 @@ def run_once_for_batch(seed: int = 0, test_size: float = 0.2):
             "infer_time_sec": float("nan")
         }
 
-    # 3) 初始化模型
+    
     model = GATWithGlobal(
         node_in_dim=2,
         hidden_dim=params["hidden_dim"],
@@ -457,14 +453,14 @@ def run_once_for_batch(seed: int = 0, test_size: float = 0.2):
         dropout=params["dropout"]
     )
 
-    # 4) 训练（计时）
+    
     t0 = time.time()
     model_path, test_loader, _, _, _ = train_model(
         model, dataset, is_multilabel=False, label_info=label_map, params=params
     )
     train_time = time.time() - t0
 
-    # 5) 评估（不打印；计时）
+    
     import numpy as np
     import torch
     from sklearn.metrics import accuracy_score, f1_score
@@ -485,7 +481,7 @@ def run_once_for_batch(seed: int = 0, test_size: float = 0.2):
     with torch.no_grad():
         for batch in test_loader:
             batch = batch.to(device)
-            # 和训练阶段保持一致的全局特征取法
+            
             global_feats = torch.stack([d.global_feats for d in batch.to_data_list()]).to(device)
             out = eval_model(batch.x, batch.edge_index, batch.batch, global_feats)
             preds.extend(out.argmax(1).cpu().numpy())
@@ -567,3 +563,4 @@ if __name__ == "__main__":
         evaluate_model(model_path, test_loader, is_multilabel=False,
                        label_map=label_map, hidden_dim=params["hidden_dim"],
                        dropout=params["dropout"])
+
